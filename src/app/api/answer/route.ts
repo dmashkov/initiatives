@@ -3,56 +3,64 @@ import OpenAI from 'openai';
 
 export const runtime = 'nodejs';
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
 
-type Ctx = {
-  initiative_id: string;
-  content: string;
-  similarity?: number;
-};
+// Тот же порог, что и в БД
+const MIN_SIM = 0.78;
+
+type Ctx = { initiative_id: string; content: string; similarity: number };
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as { question?: string; contexts?: Ctx[] };
-  const question = (body.question ?? '').trim();
-  const contexts = Array.isArray(body.contexts) ? body.contexts : [];
-
-  if (!question) {
-    return NextResponse.json({ error: 'question required' }, { status: 400 });
-  }
-
-  // Защита от слишком длинного контекста: берём до 10 кусков, сортируем по similarity (если есть)
-  const top = contexts
-    .slice(0, 50)
-    .sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
-    .slice(0, 10);
-
-  const contextText = top
-    .map((c, i) => `[#${i + 1}] (initiative ${c.initiative_id})\n${c.content}`)
-    .join('\n\n');
-
-  const sys =
-`Ты — помощник, отвечающий кратко и по делу НА РУССКОМ.
-Используй ТОЛЬКО предоставленные фрагменты контекста. Если сведений недостаточно — явно скажи об этом.
-В конце ответа дай блок "Источники:", перечислив номера фрагментов вида [#1], [#2] и ссылки вида /initiatives/<id> без повторов.`;
-
-  const userPrompt =
-`Вопрос: ${question}
-
-Контекстные фрагменты:
-${contextText || '(контекста нет)'}
-`;
-
   try {
-    const resp = await openai.chat.completions.create({
+    const { question, contexts } = (await req.json()) as {
+      question?: string;
+      contexts?: Ctx[];
+    };
+
+    const q = (question ?? '').trim();
+    if (!q) return NextResponse.json({ error: 'question is required' }, { status: 400 });
+
+    const ctx: Ctx[] = Array.isArray(contexts) ? contexts : [];
+
+    // фильтруем и ограничиваем цитируемый контекст
+    const strong = ctx.filter(c => (c.similarity ?? 0) >= MIN_SIM).slice(0, 6);
+
+    if (strong.length === 0) {
+      // Чёткий, человеко-понятный ответ без галлюцинаций
+      return NextResponse.json({
+        answer:
+          'Недостаточно информации по вопросу в базе инициатив. Уточните формулировку или воспользуйтесь поиском по сайту.',
+      });
+    }
+
+    // Готовим компактный контекст
+    const numbered = strong.map((c, i) => {
+      const head = c.content.replace(/\s+/g, ' ').slice(0, 1200); // safety
+      return `[#${i + 1}] /initiatives/${c.initiative_id}\n${head}`;
+    });
+
+    const system = [
+      'Ты помощник по базе "Инициатив".',
+      'Отвечай ТОЛЬКО на основе приведённых сниппетов.',
+      'Если сведений недостаточно — прямо скажи об этом и предложи уточнить запрос.',
+      'В конце, если уместно, укажи источники в формате [#N].',
+    ].join(' ');
+
+    const user = `Вопрос: ${q}\n\nКонтекст:\n${numbered.join('\n\n')}\n\nНапомню: если контекст не покрывает вопрос — ответь, что данных недостаточно.`;
+
+    const r = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       temperature: 0.2,
       messages: [
-        { role: 'system', content: sys },
-        { role: 'user', content: userPrompt },
+        { role: 'system', content: system },
+        { role: 'user', content: user },
       ],
     });
 
-    const answer = resp.choices?.[0]?.message?.content?.trim() || 'Нет ответа.';
+    const answer =
+      r.choices?.[0]?.message?.content?.trim() ||
+      'Недостаточно информации в доступных фрагментах.';
+
     return NextResponse.json({ answer });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

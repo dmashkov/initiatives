@@ -1,13 +1,11 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
+import { supabase } from '@/lib/supabaseClient';
 
 type Props = {
-  /** Если не передать, возьмём window.location.pathname */
   page?: string;
-  /** Если это форма на странице инициативы — передай её id */
   initiativeId?: string;
-  /** Компактный режим (чуть меньше отступы) */
   compact?: boolean;
 };
 
@@ -23,7 +21,7 @@ export default function FeedbackForm({ page, initiativeId, compact }: Props) {
 
     const form = new FormData(e.currentTarget);
 
-    // honeypot для антиспама: если поле заполнено — тихо выходим как будто всё ок
+    // honeypot
     if (String(form.get('website') || '').trim().length > 0) {
       setOk(true);
       (e.currentTarget as HTMLFormElement).reset();
@@ -46,11 +44,19 @@ export default function FeedbackForm({ page, initiativeId, compact }: Props) {
 
     setSending(true);
     try {
+      // возьмём токен текущего пользователя (если он вошёл)
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const res = await fetch('/api/feedback', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify(payload),
       });
+
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error((j?.error as string) || res.statusText);
 
@@ -65,7 +71,7 @@ export default function FeedbackForm({ page, initiativeId, compact }: Props) {
 
   return (
     <form onSubmit={onSubmit} style={{ maxWidth: 640, marginTop: compact ? 8 : 16 }}>
-      {/* Honeypot — скрытое поле для ботов */}
+      {/* Honeypot */}
       <div style={{ position: 'absolute', left: -9999, width: 1, height: 1, overflow: 'hidden' }}>
         <label>
           Ваш сайт (не заполняйте)

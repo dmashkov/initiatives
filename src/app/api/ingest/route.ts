@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { supabaseAdmin } from '@/lib/supabaseAdmin';
 import { chunkText } from '@/lib/chunk';
 import OpenAI from 'openai';
 
-export const runtime = 'nodejs'; // на Netlify надёжнее node runtime
+export const runtime = 'nodejs';
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -14,64 +13,46 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'initiativeId required' }, { status: 400 });
   }
 
-  // ВАЖНО: создаём ответ-обёртку, чтобы Supabase мог обновить cookies
-  const response = new NextResponse();
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return request.cookies.get(name)?.value;
-        },
-        set(name: string, value: string, options: CookieOptions) {
-          response.cookies.set({ name, value, ...options });
-        },
-        remove(name: string, options: CookieOptions) {
-          // Удаление — это по сути set с пустым значением и макс. сроком в прошлом
-          response.cookies.set({ name, value: '', ...options });
-        },
-      },
-    }
-  );
-
-  // 1) Текущий пользователь (если токен просрочен, Supabase обновит и положит Set-Cookie в `response`)
-  const { data: { user }, error: userErr } = await supabase.auth.getUser();
-  if (userErr) {
-    return NextResponse.json({ error: userErr.message }, { status: 500, headers: response.headers });
-  }
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401, headers: response.headers });
+  // Читаем Bearer-токен из заголовка Authorization
+  const auth = request.headers.get('authorization') || request.headers.get('Authorization');
+  const token = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
+  if (!token) {
+    return NextResponse.json({ error: 'Auth session missing!' }, { status: 401 });
   }
 
-  // 2) Моя запись и роль
+  // Проверяем токен и получаем пользователя
+  const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token);
+  if (userErr || !userData?.user) {
+    return NextResponse.json({ error: userErr?.message || 'Unauthorized' }, { status: 401 });
+  }
+  const user = userData.user;
+
+  // Роль/права
   const { data: me, error: meErr } = await supabaseAdmin
     .from('app_users')
     .select('id, role')
     .eq('auth_user_id', user.id)
     .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 500, headers: response.headers });
-  if (!me) return NextResponse.json({ error: 'User not found' }, { status: 403, headers: response.headers });
-
+  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 500 });
+  if (!me) return NextResponse.json({ error: 'User not found' }, { status: 403 });
   const isAdmin = me.role === 'admin';
 
-  // 3) Инициатива
+  // Проверяем инициативу
   const { data: ini, error: iniErr } = await supabaseAdmin
     .from('initiatives')
     .select('id, title, description, author_id')
     .eq('id', initiativeId)
     .maybeSingle();
-  if (iniErr) return NextResponse.json({ error: iniErr.message }, { status: 500, headers: response.headers });
-  if (!ini) return NextResponse.json({ error: 'Initiative not found' }, { status: 404, headers: response.headers });
+  if (iniErr) return NextResponse.json({ error: iniErr.message }, { status: 500 });
+  if (!ini) return NextResponse.json({ error: 'Initiative not found' }, { status: 404 });
   if (!isAdmin && ini.author_id !== me.id) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403, headers: response.headers });
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  // 4) Чистим прошлый индекс
+  // Чистим прошлый индекс
   await supabaseAdmin.from('doc_chunks').delete().eq('initiative_id', initiativeId);
 
-  // 5) Индексация описания
+  // 1) Индексируем заголовок+описание
   const baseText = `${ini.title}\n\n${ini.description ?? ''}`;
   const baseChunks = chunkText(baseText, 1000, 150);
   if (baseChunks.length) {
@@ -87,21 +68,21 @@ export async function POST(request: NextRequest) {
       embedding: emb.data[i].embedding as unknown as number[],
     }));
     const { error } = await supabaseAdmin.from('doc_chunks').insert(rows);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: response.headers });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // 6) Индексация текстовых вложений
+  // 2) Индексируем текстовые вложения
   const { data: atts, error: attsErr } = await supabaseAdmin
     .from('initiative_attachments')
     .select('path, mime_type')
     .eq('initiative_id', initiativeId);
-  if (attsErr) return NextResponse.json({ error: attsErr.message }, { status: 500, headers: response.headers });
+  if (attsErr) return NextResponse.json({ error: attsErr.message }, { status: 500 });
 
   const isTextLike = (mime: string | null) =>
     !!mime && (mime.startsWith('text/') || mime.includes('markdown') || mime.includes('json'));
 
   const allChunks: string[] = [];
-  for (const a of (atts ?? [])) {
+  for (const a of atts ?? []) {
     if (!isTextLike(a.mime_type)) continue;
     const { data: signed, error: signErr } = await supabaseAdmin
       .storage.from('attachments')
@@ -126,9 +107,8 @@ export async function POST(request: NextRequest) {
       embedding: emb2.data[i].embedding as unknown as number[],
     }));
     const { error } = await supabaseAdmin.from('doc_chunks').insert(rows2);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500, headers: response.headers });
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  // Возвращаем JSON и прокидываем Set-Cookie из `response`
-  return NextResponse.json({ ok: true }, { headers: response.headers });
+  return NextResponse.json({ ok: true });
 }

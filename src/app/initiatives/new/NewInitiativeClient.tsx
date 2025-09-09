@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type FormEvent, type ChangeEvent } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
 import { uploadAttachment } from '@/lib/uploadAttachment';
@@ -21,7 +21,11 @@ export default function NewInitiativeClient() {
       if (!user) return;
 
       await supabase.from('app_users').upsert(
-        { auth_user_id: user.id, email: user.email!, full_name: user.user_metadata?.full_name ?? null },
+        {
+          auth_user_id: user.id,
+          email: user.email ?? null,
+          full_name: (user.user_metadata as Record<string, unknown> | undefined)?.full_name ?? null,
+        },
         { onConflict: 'auth_user_id' },
       );
 
@@ -36,9 +40,12 @@ export default function NewInitiativeClient() {
     })();
   }, []);
 
-  async function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!authorId || !appUserId) return alert('Нет авторизации. Войдите заново.');
+    if (!authorId || !appUserId) {
+      alert('Нет авторизации. Войдите заново.');
+      return;
+    }
 
     setSaving(true);
 
@@ -55,12 +62,13 @@ export default function NewInitiativeClient() {
       .select('id')
       .single();
 
-    if (error) {
+    if (error || !ins?.id) {
       setSaving(false);
-      return alert('Ошибка: ' + error.message);
+      alert('Ошибка: ' + (error?.message ?? 'не удалось создать запись'));
+      return;
     }
 
-    const initiativeId = ins!.id as string;
+    const initiativeId = String(ins.id);
 
     // 2) загружаем вложения (если есть)
     const files = fileRef.current?.files;
@@ -74,26 +82,42 @@ export default function NewInitiativeClient() {
           }
           await uploadAttachment(file, initiativeId, appUserId);
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.error(e);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(err);
         alert('Файл(ы) не загрузились: ' + msg);
       }
     }
 
-    // 3) индексация для RAG (не блокирующая UX: ошибки — в консоль/alert)
+    // 3) индексация для RAG — c Bearer-токеном
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
+
       const res = await fetch('/api/ingest', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ initiativeId }),
       });
+
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        console.warn('ingest failed:', j?.error ?? res.status);
+        // аккуратно разбираем JSON без any
+        let serverError: string | undefined;
+        try {
+          const j: unknown = await res.json();
+          if (j && typeof j === 'object' && 'error' in j) {
+            serverError = String((j as { error?: unknown }).error ?? '');
+          }
+        } catch {
+          /* ignore parse error */
+        }
+        console.warn('ingest failed:', serverError ?? `HTTP ${res.status}`);
       }
-    } catch (e) {
-      console.warn('ingest error:', e);
+    } catch (err) {
+      console.warn('ingest error:', err instanceof Error ? err.message : String(err));
     }
 
     setSaving(false);
@@ -109,7 +133,7 @@ export default function NewInitiativeClient() {
           <label>Название<br />
             <input
               value={title}
-              onChange={(e) => setTitle(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setTitle(e.target.value)}
               required
               style={{ width: '100%', padding: 8 }}
             />
@@ -120,7 +144,7 @@ export default function NewInitiativeClient() {
           <label>Категория (необязательно)<br />
             <input
               value={category}
-              onChange={(e) => setCategory(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLInputElement>) => setCategory(e.target.value)}
               style={{ width: '100%', padding: 8 }}
             />
           </label>
@@ -130,7 +154,7 @@ export default function NewInitiativeClient() {
           <label>Описание<br />
             <textarea
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setDescription(e.target.value)}
               required
               rows={6}
               style={{ width: '100%', padding: 8 }}

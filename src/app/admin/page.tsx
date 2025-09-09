@@ -177,24 +177,30 @@ export default function AdminPage() {
   }
 
   async function reindex(initiativeId: string) {
-    if (reindexingId) return;
-    setReindexingId(initiativeId);
-    try {
-      const r = await fetch('/api/ingest', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ initiativeId }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j?.error ?? `HTTP ${r.status}`);
-      alert('Переиндексация завершена.');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      alert('Индексирование не удалось: ' + msg);
-    } finally {
-      setReindexingId(null);
-    }
+  if (reindexingId) return;
+  setReindexingId(initiativeId);
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token;
+
+    const r = await fetch('/api/ingest', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ initiativeId }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j?.error ?? `HTTP ${r.status}`);
+    alert('Переиндексация завершена.');
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    alert('Индексирование не удалось: ' + msg);
+  } finally {
+    setReindexingId(null);
   }
+}
 
   if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
   if (isAdmin === false) {

@@ -5,7 +5,6 @@ export async function uploadAttachment(
   initiativeId: string,
   appUserId: string
 ) {
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? 'bin';
   const safeName = file.name.replace(/[^\w.\-]+/g, '_');
   const path = `${appUserId}/${initiativeId}/${Date.now()}_${safeName}`;
 
@@ -13,13 +12,12 @@ export async function uploadAttachment(
     .storage
     .from('attachments')
     .upload(path, file, {
-      contentType: file.type || `application/octet-stream`,
+      contentType: file.type || 'application/octet-stream',
       upsert: false,
     });
 
   if (upErr) throw upErr;
 
-  // записываем в реестр
   const { error: insErr } = await supabase
     .from('initiative_attachments')
     .insert({

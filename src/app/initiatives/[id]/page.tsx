@@ -61,7 +61,7 @@ export default function InitiativePage() {
         .select('id,title,description,category,status,created_at, author:app_users(email)')
         .eq('id', id as string)
         .maybeSingle();
-      setIt((init as any) ?? null);
+      setIt((init as unknown as Initiative) ?? null);
 
       // Комментарии
       const { data: cmts } = await supabase
@@ -69,7 +69,7 @@ export default function InitiativePage() {
         .select('id,body,created_at, author:app_users(email)')
         .eq('initiative_id', id as string)
         .order('created_at', { ascending: true });
-      setComments((cmts as any[]) ?? []);
+      setComments(((cmts ?? []) as Comment[]));
 
       // История статусов
       const { data: hist } = await supabase
@@ -77,7 +77,7 @@ export default function InitiativePage() {
         .select('id,from_status,to_status,changed_at, changed_by:app_users(email)')
         .eq('initiative_id', id as string)
         .order('changed_at', { ascending: true });
-      setHistory((hist as any[]) ?? []);
+      setHistory(((hist ?? []) as History[]));
 
       // Вложения
       const { data: atts } = await supabase
@@ -85,10 +85,11 @@ export default function InitiativePage() {
         .select('id, path, mime_type, size_bytes')
         .eq('initiative_id', id as string)
         .order('uploaded_at', { ascending: true });
-      const list = (atts as Attachment[]) ?? [];
+
+      const list = ((atts ?? []) as Attachment[]);
       setAttachments(list);
 
-      // Подписанные ссылки (на 1 час) — генерим последовательно
+      // Подписанные ссылки (на 1 час)
       const links: Record<string, string> = {};
       for (const a of list) {
         const { data: urlData } = await supabase

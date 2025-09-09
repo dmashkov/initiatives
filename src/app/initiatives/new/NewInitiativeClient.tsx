@@ -42,7 +42,6 @@ export default function NewInitiativeClient() {
 
     setSaving(true);
 
-    // создаём инициативу
     const { data: ins, error } = await supabase
       .from('initiatives')
       .insert({
@@ -62,7 +61,6 @@ export default function NewInitiativeClient() {
 
     const initiativeId = ins!.id as string;
 
-    // загружаем вложения (если есть)
     const files = fileRef.current?.files;
     if (files && files.length > 0) {
       try {
@@ -74,9 +72,10 @@ export default function NewInitiativeClient() {
           }
           await uploadAttachment(file, initiativeId, appUserId);
         }
-      } catch (e: any) {
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
         console.error(e);
-        alert('Файл(ы) не загрузились: ' + (e?.message ?? e));
+        alert('Файл(ы) не загрузились: ' + msg);
       }
     }
 

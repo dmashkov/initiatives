@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -11,7 +11,7 @@ type RawRow = {
   initiative_id: string;
   content: string;
   similarity?: number;
-  distance?: number; // на случай, если в RPC вернули не similarity, а distance
+  distance?: number;
 };
 
 type MatchRow = {
@@ -26,7 +26,7 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
 
-/** Безопасный разбор JSON + внятные сообщения об ошибках */
+/** Безопасный разбор JSON + внятные сообщения */
 async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   const ct = res.headers.get('content-type') || '';
@@ -35,25 +35,23 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   if (!ct.includes('application/json')) {
     throw new Error(`${url} -> ${res.status} ${res.statusText}; non-JSON: ${raw.slice(0, 180)}`);
   }
-
   let data: unknown;
-  try {
-    data = JSON.parse(raw);
-  } catch {
-    throw new Error(`${url} -> invalid JSON`);
-  }
+  try { data = JSON.parse(raw); } catch { throw new Error(`${url} -> invalid JSON`); }
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
-    if (isRecord(data) && typeof data.error === 'string') msg = data.error;
+    if (isRecord(data) && typeof (data as any).error === 'string') msg = (data as any).error;
     throw new Error(`${url} -> ${msg}`);
   }
-
   return data as T;
 }
 
 export default function SearchPage() {
   const [q, setQ] = useState('');
+  // порог по умолчанию (можно крутить ползунком). 65% обычно даёт хорошие топ-совпадения
+  const [minSimPct, setMinSimPct] = useState<number>(65);
+  const minSim = useMemo(() => Math.max(0, Math.min(1, minSimPct / 100)), [minSimPct]);
+
   const [loading, setLoading] = useState(false);
   const [matches, setMatches] = useState<MatchRow[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -74,18 +72,18 @@ export default function SearchPage() {
         body: JSON.stringify({ q }),
       });
 
-      // 2) RPC с порогом схожести
+      // 2) RPC с настраиваемым порогом
       const { data, error } = await supabase.rpc('match_chunks', {
         query_embedding: embedding,
         match_count: 20,
-        min_similarity: 0.78,
-        // если у вас версия RPC с параметром probes, можно добавить: probes: 4
+        min_similarity: minSim, // <-- ключевая правка
+        // если у вас есть версия RPC с probes: probes: 4
       });
       if (error) throw new Error(error.message);
 
       const raw = (data ?? []) as RawRow[];
 
-      // Унифицируем: если пришла distance — пересчитаем в similarity
+      // Унификация similarity (если вдруг пришёл distance)
       const unified: MatchRow[] = raw.map((r) => ({
         id: r.id,
         initiative_id: r.initiative_id,
@@ -98,15 +96,15 @@ export default function SearchPage() {
             : 0,
       }));
 
-      // Отфильтруем уж совсем слабые совпадения на всякий случай
-      const top = unified.filter((m) => m.similarity >= 0.01);
+      // На всякий случай отсечём совсем мусор
+      const final = unified.filter((m) => m.similarity >= 0.01);
 
-      setMatches(top);
+      setMatches(final);
 
-      if (top.length === 0) {
+      if (final.length === 0) {
         setErrorMsg(
-          'Ничего релевантного не нашли. Попробуйте переформулировать запрос ' +
-            'или задайте вопрос на странице AI-помощника.'
+          'Совпадений не найдено при текущем пороге. ' +
+            'Снизьте порог или переформулируйте запрос.'
         );
       }
     } catch (err) {
@@ -141,6 +139,21 @@ export default function SearchPage() {
             background: 'white',
           }}
         />
+
+        {/* Ползунок порога релевантности */}
+        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <label style={{ whiteSpace: 'nowrap' }}>Порог релевантности:</label>
+          <input
+            type="range"
+            min={40}
+            max={95}
+            step={1}
+            value={minSimPct}
+            onChange={(e) => setMinSimPct(Number(e.target.value))}
+          />
+          <span style={{ width: 44, textAlign: 'right' }}>{minSimPct}%</span>
+        </div>
+
         <button type="submit" disabled={loading} style={{ marginTop: 8, padding: 10 }}>
           {loading ? 'Ищу…' : 'Поиск'}
         </button>

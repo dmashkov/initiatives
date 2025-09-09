@@ -1,24 +1,57 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+
 import { useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
 import Link from 'next/link';
+import { supabase } from '@/lib/supabaseClient';
 
 type MatchRow = {
   id: string;
   initiative_id: string;
   content: string;
-  similarity: number;
+  similarity: number; // 0..1
 };
+
+// Узкая проверка на "похож на объект-словарь"
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null;
+}
+
+/** Безопасный разбор JSON с понятной ошибкой, если прилетел HTML/текст */
+async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const ct = res.headers.get('content-type') || '';
+  const raw = await res.text();
+
+  if (!ct.includes('application/json')) {
+    throw new Error(`${url} -> ${res.status} ${res.statusText}; non-JSON: ${raw.slice(0, 180)}`);
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(`${url} -> invalid JSON`);
+  }
+
+  if (!res.ok) {
+    let msg = `${res.status} ${res.statusText}`;
+    if (isRecord(data) && typeof data.error === 'string') msg = data.error;
+    throw new Error(`${url} -> ${msg}`);
+  }
+
+  return data as T;
+}
 
 export default function AskPage() {
   const [q, setQ] = useState('');
   const [matches, setMatches] = useState<MatchRow[]>([]);
-  const [answer, setAnswer] = useState<string>('');
+  const [answer, setAnswer] = useState('');
   const [loading, setLoading] = useState(false);
   const [phase, setPhase] = useState<'idle' | 'finding' | 'answering'>('idle');
 
-  async function handleAsk(e: React.FormEvent) {
+  async function handleAsk(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!q.trim()) return;
 
@@ -28,28 +61,37 @@ export default function AskPage() {
     setPhase('finding');
 
     try {
-      // 1) эмбеддинг вопроса
-      const r = await fetch('/api/embed', {
+      // 1) Эмбеддинг вопроса
+      const { embedding } = await fetchJSON<{ embedding: number[] }>('/api/embed', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ q }),
       });
-      const j = (await r.json()) as { embedding?: number[]; error?: string };
-      if (!r.ok || !j.embedding) throw new Error(j.error ?? 'embed failed');
 
-      // 2) поиск похожих чанков (RLS ограничит доступ видимыми инициативами)
+      // 2) Поиск релевантных чанков с порогом схожести
       const { data, error } = await supabase.rpc('match_chunks', {
-        query_embedding: j.embedding,
+        query_embedding: embedding,
         match_count: 10,
+        min_similarity: 0.78,
       });
-      if (error) throw error;
+      if (error) throw new Error(error.message);
+
       const got = (data ?? []) as MatchRow[];
+      if (got.length === 0) {
+        setMatches([]);
+        setAnswer(
+          'Ничего релевантного не нашли в базе инициатив. ' +
+            'Попробуйте переформулировать запрос или воспользуйтесь поиском.'
+        );
+        setPhase('idle');
+        setLoading(false);
+        return;
+      }
       setMatches(got);
 
+      // 3) Генерация ответа на основе контекста
       setPhase('answering');
-
-      // 3) запрос к AI с контекстом
-      const a = await fetch('/api/answer', {
+      const { answer } = await fetchJSON<{ answer: string }>('/api/answer', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -61,9 +103,8 @@ export default function AskPage() {
           })),
         }),
       });
-      const aj = (await a.json()) as { answer?: string; error?: string };
-      if (!a.ok || !aj.answer) throw new Error(aj.error ?? 'answer failed');
-      setAnswer(aj.answer);
+
+      setAnswer(answer || 'Недостаточно информации в доступных фрагментах.');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       alert('Ошибка: ' + msg);
@@ -75,9 +116,11 @@ export default function AskPage() {
 
   return (
     <div style={{ maxWidth: 900, margin: '24px auto', fontFamily: 'system-ui' }}>
-      <nav style={{ marginBottom: 12 }}>
-        <Link href="/dashboard">← Личный кабинет</Link>&nbsp;&nbsp;
+      <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+        <Link href="/dashboard">← Личный кабинет</Link>
         <Link href="/search">Поиск</Link>
+        <Link href="/admin">Админка</Link>
+        <Link href="/feedback">Обратная связь</Link>
       </nav>
 
       <h1>AI-помощник</h1>
@@ -86,7 +129,7 @@ export default function AskPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder="Сформулируйте вопрос по инициативам…"
-          style={{ width: '100%', padding: 10 }}
+          style={{ width: '100%', padding: 10, border: '1px solid #D0D5DD', borderRadius: 6 }}
         />
         <button type="submit" disabled={loading} style={{ marginTop: 8, padding: 10 }}>
           {phase === 'finding' ? 'Ищу контекст…' : phase === 'answering' ? 'Генерирую ответ…' : 'Спросить'}
@@ -94,7 +137,16 @@ export default function AskPage() {
       </form>
 
       {answer && (
-        <div style={{ marginTop: 18, padding: 12, background: '#fafafa', whiteSpace: 'pre-wrap' }}>
+        <div
+          style={{
+            marginTop: 18,
+            padding: 12,
+            background: '#FAFAFA',
+            border: '1px solid #EEE',
+            borderRadius: 6,
+            whiteSpace: 'pre-wrap',
+          }}
+        >
           {answer}
         </div>
       )}

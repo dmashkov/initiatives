@@ -5,7 +5,7 @@ export const revalidate = 0;
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import FeedbackForm from '@/components/FeedbackForm';
 
@@ -30,13 +30,9 @@ type Attachment = {
   uploaded_at: string;
 };
 
-export default function InitiativeDetailsPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const id = params.id;
+export default function InitiativeDetailsPage() {
   const router = useRouter();
+  const { id } = useParams<{ id: string }>();
 
   const [it, setIt] = useState<Initiative | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -45,11 +41,13 @@ export default function InitiativeDetailsPage({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!id) return;
+
     (async () => {
       setLoading(true);
       setErrorMsg(null);
 
-      // 1) сама инициатива
+      // 1) инициатива
       const { data: row, error } = await supabase
         .from('initiatives')
         .select('id, title, description, category, status, created_at, author_id')
@@ -67,7 +65,7 @@ export default function InitiativeDetailsPage({
         return;
       }
 
-      // 2) e-mail автора (отдельным запросом — надёжнее, чем вложенный select)
+      // 2) email автора
       let authorEmail: string | null = null;
       if (row.author_id) {
         const { data: au } = await supabase
@@ -78,10 +76,7 @@ export default function InitiativeDetailsPage({
         authorEmail = au?.email ?? null;
       }
 
-      setIt({
-        ...row,
-        author_email: authorEmail,
-      } as Initiative);
+      setIt({ ...row, author_email: authorEmail } as Initiative);
 
       // 3) вложения
       const { data: atts, error: attErr } = await supabase
@@ -94,7 +89,6 @@ export default function InitiativeDetailsPage({
         const list = atts as Attachment[];
         setAttachments(list);
 
-        // подписанные ссылки на 1 час
         const links: Record<string, string> = {};
         for (const a of list) {
           const { data: urlData } = await supabase
@@ -115,11 +109,12 @@ export default function InitiativeDetailsPage({
   if (errorMsg) {
     return (
       <div style={{ padding: 24, fontFamily: 'system-ui' }}>
-        <nav style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+        <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Link href="/dashboard">← Личный кабинет</Link>
           <Link href="/search">Поиск</Link>
           <Link href="/ask">AI-помощник</Link>
           <Link href="/admin">Админка</Link>
+          <Link href="/feedback">Обратная связь</Link>
         </nav>
         <h1>Детали инициативы</h1>
         <p style={{ color: '#DC2626' }}>Ошибка: {errorMsg}</p>
@@ -130,11 +125,12 @@ export default function InitiativeDetailsPage({
   if (!it) {
     return (
       <div style={{ padding: 24, fontFamily: 'system-ui' }}>
-        <nav style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+        <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Link href="/dashboard">← Личный кабинет</Link>
           <Link href="/search">Поиск</Link>
           <Link href="/ask">AI-помощник</Link>
           <Link href="/admin">Админка</Link>
+          <Link href="/feedback">Обратная связь</Link>
         </nav>
         <h1>Детали инициативы</h1>
         <p>Запись не найдена.</p>
@@ -144,12 +140,13 @@ export default function InitiativeDetailsPage({
 
   return (
     <div style={{ maxWidth: 960, margin: '24px auto', fontFamily: 'system-ui' }}>
-      <nav style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+      <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
         <button onClick={() => router.back()}>← Назад</button>
         <Link href="/dashboard">ЛК</Link>
         <Link href="/search">Поиск</Link>
         <Link href="/ask">AI-помощник</Link>
         <Link href="/admin">Админка</Link>
+        <Link href="/feedback">Обратная связь</Link>
       </nav>
 
       <h1 style={{ marginBottom: 4 }}>{it.title}</h1>
@@ -189,7 +186,7 @@ export default function InitiativeDetailsPage({
         )}
       </section>
 
-      {/* -------- ФОРМА ОБРАТНОЙ СВЯЗИ (виджет) -------- */}
+      {/* -------- ФОРМА ОБРАТНОЙ СВЯЗИ -------- */}
       <section style={{ marginTop: 32 }}>
         <h3>Обратная связь по инициативе</h3>
         <p style={{ marginTop: 4, color: '#6B7280' }}>
@@ -197,7 +194,7 @@ export default function InitiativeDetailsPage({
         </p>
         <FeedbackForm initiativeId={it.id} compact />
       </section>
-      {/* ----------------------------------------------- */}
+      {/* -------------------------------------- */}
     </div>
   );
 }

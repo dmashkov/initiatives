@@ -21,9 +21,11 @@ type MatchRow = {
   similarity: number; // 0..1
 };
 
-// Узкий guard
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
+}
+function hasStringError(v: unknown): v is { error: string } {
+  return typeof v === 'object' && v !== null && 'error' in v && typeof (v as { error: unknown }).error === 'string';
 }
 
 /** Безопасный разбор JSON + внятные сообщения */
@@ -35,20 +37,25 @@ async function fetchJSON<T>(url: string, init?: RequestInit): Promise<T> {
   if (!ct.includes('application/json')) {
     throw new Error(`${url} -> ${res.status} ${res.statusText}; non-JSON: ${raw.slice(0, 180)}`);
   }
+
   let data: unknown;
-  try { data = JSON.parse(raw); } catch { throw new Error(`${url} -> invalid JSON`); }
+  try {
+    data = JSON.parse(raw);
+  } catch {
+    throw new Error(`${url} -> invalid JSON`);
+  }
 
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
-    if (isRecord(data) && typeof (data as any).error === 'string') msg = (data as any).error;
+    if (hasStringError(data)) msg = data.error;
     throw new Error(`${url} -> ${msg}`);
   }
+
   return data as T;
 }
 
 export default function SearchPage() {
   const [q, setQ] = useState('');
-  // порог по умолчанию (можно крутить ползунком). 65% обычно даёт хорошие топ-совпадения
   const [minSimPct, setMinSimPct] = useState<number>(65);
   const minSim = useMemo(() => Math.max(0, Math.min(1, minSimPct / 100)), [minSimPct]);
 
@@ -76,14 +83,13 @@ export default function SearchPage() {
       const { data, error } = await supabase.rpc('match_chunks', {
         query_embedding: embedding,
         match_count: 20,
-        min_similarity: minSim, // <-- ключевая правка
-        // если у вас есть версия RPC с probes: probes: 4
+        min_similarity: minSim,
       });
       if (error) throw new Error(error.message);
 
       const raw = (data ?? []) as RawRow[];
 
-      // Унификация similarity (если вдруг пришёл distance)
+      // Унифицируем similarity (если вдруг пришла distance)
       const unified: MatchRow[] = raw.map((r) => ({
         id: r.id,
         initiative_id: r.initiative_id,
@@ -96,15 +102,12 @@ export default function SearchPage() {
             : 0,
       }));
 
-      // На всякий случай отсечём совсем мусор
       const final = unified.filter((m) => m.similarity >= 0.01);
-
       setMatches(final);
 
       if (final.length === 0) {
         setErrorMsg(
-          'Совпадений не найдено при текущем пороге. ' +
-            'Снизьте порог или переформулируйте запрос.'
+          'Совпадений не найдено при текущем пороге. Снизьте порог или переформулируйте запрос.'
         );
       }
     } catch (err) {
@@ -140,7 +143,7 @@ export default function SearchPage() {
           }}
         />
 
-        {/* Ползунок порога релевантности */}
+        {/* Порог релевантности */}
         <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
           <label style={{ whiteSpace: 'nowrap' }}>Порог релевантности:</label>
           <input

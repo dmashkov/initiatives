@@ -6,6 +6,14 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
+type RawRow = {
+  id: string;
+  initiative_id: string;
+  content: string;
+  similarity?: number;
+  distance?: number; // на случай, если в RPC вернули не similarity, а distance
+};
+
 type MatchRow = {
   id: string;
   initiative_id: string;
@@ -13,7 +21,7 @@ type MatchRow = {
   similarity: number; // 0..1
 };
 
-// Узкий type guard
+// Узкий guard
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null;
 }
@@ -59,28 +67,46 @@ export default function SearchPage() {
     setMatches([]);
 
     try {
-      // 1) Получаем эмбеддинг запроса
+      // 1) эмбеддинг запроса
       const { embedding } = await fetchJSON<{ embedding: number[] }>('/api/embed', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ q }),
       });
 
-      // 2) Ищем подходящие чанки (RAG) c порогом релевантности
+      // 2) RPC с порогом схожести
       const { data, error } = await supabase.rpc('match_chunks', {
         query_embedding: embedding,
         match_count: 20,
-        min_similarity: 0.78, // при желании повысьте до 0.82
+        min_similarity: 0.78,
+        // если у вас версия RPC с параметром probes, можно добавить: probes: 4
       });
       if (error) throw new Error(error.message);
 
-      const got = (data ?? []) as MatchRow[];
-      setMatches(got);
+      const raw = (data ?? []) as RawRow[];
 
-      if (got.length === 0) {
+      // Унифицируем: если пришла distance — пересчитаем в similarity
+      const unified: MatchRow[] = raw.map((r) => ({
+        id: r.id,
+        initiative_id: r.initiative_id,
+        content: r.content,
+        similarity:
+          typeof r.similarity === 'number'
+            ? r.similarity
+            : typeof r.distance === 'number'
+            ? Math.max(0, Math.min(1, 1 - r.distance))
+            : 0,
+      }));
+
+      // Отфильтруем уж совсем слабые совпадения на всякий случай
+      const top = unified.filter((m) => m.similarity >= 0.01);
+
+      setMatches(top);
+
+      if (top.length === 0) {
         setErrorMsg(
           'Ничего релевантного не нашли. Попробуйте переформулировать запрос ' +
-          'или задайте вопрос на странице AI-помощника.'
+            'или задайте вопрос на странице AI-помощника.'
         );
       }
     } catch (err) {

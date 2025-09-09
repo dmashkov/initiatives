@@ -1,36 +1,12 @@
-'use client';
+import { Suspense } from 'react';
+import CallbackClient from './CallbackClient';
 
-import { useEffect } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
+export const dynamic = 'force-dynamic'; // не пытаться статически генерировать
 
-export default function AuthCallback() {
-  const router = useRouter();
-  const sp = useSearchParams();
-
-  useEffect(() => {
-    const code = sp.get('code');
-    const hash = typeof window !== 'undefined' ? window.location.hash : '';
-    const hasAccessToken = hash.includes('access_token=');
-
-    (async () => {
-      try {
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-          router.replace('/dashboard');
-        } else if (hasAccessToken) {
-          router.replace('/dashboard');
-        } else {
-          router.replace('/login');
-        }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        alert('Не удалось войти: ' + msg);
-        router.replace('/login');
-      }
-    })();
-  }, [router, sp]);
-
-  return <p style={{ padding: 24 }}>Вход… пожалуйста, подождите.</p>;
+export default function AuthCallbackPage() {
+  return (
+    <Suspense fallback={<p style={{ padding: 24 }}>Вход…</p>}>
+      <CallbackClient />
+    </Suspense>
+  );
 }

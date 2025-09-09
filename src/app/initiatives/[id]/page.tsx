@@ -1,12 +1,8 @@
 'use client';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
-
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useParams } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
 import FeedbackForm from '@/components/FeedbackForm';
 
 type Status = 'submitted' | 'in_review' | 'approved' | 'rejected';
@@ -41,81 +37,94 @@ export default function InitiativeDetailsPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || Array.isArray(id)) return;
 
     (async () => {
-      setLoading(true);
-      setErrorMsg(null);
+      try {
+        setLoading(true);
+        setErrorMsg(null);
 
-      // 1) инициатива
-      const { data: row, error } = await supabase
-        .from('initiatives')
-        .select('id, title, description, category, status, created_at, author_id')
-        .eq('id', id)
-        .maybeSingle();
+        // ВАЖНО: импортируем Supabase только в браузере
+        const { supabase } = await import('@/lib/supabaseClient');
 
-      if (error) {
-        setErrorMsg(error.message);
-        setLoading(false);
-        return;
-      }
-      if (!row) {
-        setErrorMsg('Инициатива не найдена');
-        setLoading(false);
-        return;
-      }
-
-      // 2) email автора
-      let authorEmail: string | null = null;
-      if (row.author_id) {
-        const { data: au } = await supabase
-          .from('app_users')
-          .select('email')
-          .eq('id', row.author_id)
+        // 1) инициатива
+        const { data: row, error } = await supabase
+          .from('initiatives')
+          .select('id, title, description, category, status, created_at, author_id')
+          .eq('id', id)
           .maybeSingle();
-        authorEmail = au?.email ?? null;
-      }
 
-      setIt({ ...row, author_email: authorEmail } as Initiative);
+        if (error) throw new Error(error.message);
+        if (!row) {
+          setErrorMsg('Инициатива не найдена');
+          setLoading(false);
+          return;
+        }
 
-      // 3) вложения
-      const { data: atts, error: attErr } = await supabase
-        .from('initiative_attachments')
-        .select('id, path, mime_type, size_bytes, uploaded_at')
-        .eq('initiative_id', id)
-        .order('uploaded_at', { ascending: true });
+        // 2) email автора
+        let authorEmail: string | null = null;
+        if (row.author_id) {
+          const { data: au, error: auErr } = await supabase
+            .from('app_users')
+            .select('email')
+            .eq('id', row.author_id)
+            .maybeSingle();
+          if (auErr) throw new Error(auErr.message);
+          authorEmail = au?.email ?? null;
+        }
 
-      if (!attErr && atts) {
-        const list = atts as Attachment[];
+        setIt({ ...row, author_email: authorEmail } as Initiative);
+
+        // 3) вложения
+        const { data: atts, error: attErr } = await supabase
+          .from('initiative_attachments')
+          .select('id, path, mime_type, size_bytes, uploaded_at')
+          .eq('initiative_id', id)
+          .order('uploaded_at', { ascending: true });
+
+        if (attErr) throw new Error(attErr.message);
+
+        const list = (atts ?? []) as Attachment[];
         setAttachments(list);
 
+        // подписанные ссылки (1 час)
         const links: Record<string, string> = {};
         for (const a of list) {
-          const { data: urlData } = await supabase
+          const { data: urlData, error: urlErr } = await supabase
             .storage
             .from('attachments')
             .createSignedUrl(a.path, 3600);
+          if (urlErr) continue;
           if (urlData?.signedUrl) links[a.id] = urlData.signedUrl;
         }
         setSignedUrlById(links);
-      }
 
-      setLoading(false);
+        setLoading(false);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setErrorMsg(msg || 'Неизвестная ошибка');
+        setLoading(false);
+      }
     })();
   }, [id]);
 
   if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
 
+  const Nav = (
+    <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+      <button onClick={() => router.back()}>← Назад</button>
+      <Link href="/dashboard">ЛК</Link>
+      <Link href="/search">Поиск</Link>
+      <Link href="/ask">AI-помощник</Link>
+      <Link href="/admin">Админка</Link>
+      <Link href="/feedback">Обратная связь</Link>
+    </nav>
+  );
+
   if (errorMsg) {
     return (
       <div style={{ padding: 24, fontFamily: 'system-ui' }}>
-        <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href="/dashboard">← Личный кабинет</Link>
-          <Link href="/search">Поиск</Link>
-          <Link href="/ask">AI-помощник</Link>
-          <Link href="/admin">Админка</Link>
-          <Link href="/feedback">Обратная связь</Link>
-        </nav>
+        {Nav}
         <h1>Детали инициативы</h1>
         <p style={{ color: '#DC2626' }}>Ошибка: {errorMsg}</p>
       </div>
@@ -125,13 +134,7 @@ export default function InitiativeDetailsPage() {
   if (!it) {
     return (
       <div style={{ padding: 24, fontFamily: 'system-ui' }}>
-        <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Link href="/dashboard">← Личный кабинет</Link>
-          <Link href="/search">Поиск</Link>
-          <Link href="/ask">AI-помощник</Link>
-          <Link href="/admin">Админка</Link>
-          <Link href="/feedback">Обратная связь</Link>
-        </nav>
+        {Nav}
         <h1>Детали инициативы</h1>
         <p>Запись не найдена.</p>
       </div>
@@ -140,14 +143,7 @@ export default function InitiativeDetailsPage() {
 
   return (
     <div style={{ maxWidth: 960, margin: '24px auto', fontFamily: 'system-ui' }}>
-      <nav style={{ marginBottom: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={() => router.back()}>← Назад</button>
-        <Link href="/dashboard">ЛК</Link>
-        <Link href="/search">Поиск</Link>
-        <Link href="/ask">AI-помощник</Link>
-        <Link href="/admin">Админка</Link>
-        <Link href="/feedback">Обратная связь</Link>
-      </nav>
+      {Nav}
 
       <h1 style={{ marginBottom: 4 }}>{it.title}</h1>
       <div style={{ color: '#6B7280', marginBottom: 16 }}>
@@ -186,7 +182,6 @@ export default function InitiativeDetailsPage() {
         )}
       </section>
 
-      {/* -------- ФОРМА ОБРАТНОЙ СВЯЗИ -------- */}
       <section style={{ marginTop: 32 }}>
         <h3>Обратная связь по инициативе</h3>
         <p style={{ marginTop: 4, color: '#6B7280' }}>
@@ -194,7 +189,6 @@ export default function InitiativeDetailsPage() {
         </p>
         <FeedbackForm initiativeId={it.id} compact />
       </section>
-      {/* -------------------------------------- */}
     </div>
   );
 }

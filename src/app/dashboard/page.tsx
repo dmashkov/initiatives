@@ -4,11 +4,20 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
+type Status = 'submitted' | 'in_review' | 'approved' | 'rejected';
+
+type Initiative = {
+  id: string;
+  title: string;
+  status: Status;
+  created_at: string;
+};
+
 export default function Dashboard() {
-  const [email, setEmail] = useState(null);
-  const [role, setRole] = useState(null); // 'user' | 'admin'
-  const [initiatives, setInitiatives] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState<string | null>(null);
+  const [role, setRole] = useState<'user' | 'admin' | null>(null);
+  const [initiatives, setInitiatives] = useState<Initiative[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     (async () => {
@@ -18,7 +27,11 @@ export default function Dashboard() {
 
       // не перезатираем роль
       await supabase.from('app_users').upsert(
-        { auth_user_id: user.id, email: user.email, full_name: user.user_metadata?.full_name ?? null },
+        {
+          auth_user_id: user.id,
+          email: user.email,
+          full_name: user.user_metadata?.full_name ?? null,
+        },
         { onConflict: 'auth_user_id' },
       );
 
@@ -28,8 +41,8 @@ export default function Dashboard() {
         .eq('auth_user_id', user.id)
         .maybeSingle();
 
-      const myId = me?.id ?? null;
-      setRole(me?.role ?? 'user');
+      const myId = (me?.id as string) ?? null;
+      setRole((me?.role as 'user' | 'admin') ?? 'user');
 
       if (myId) {
         const { data } = await supabase
@@ -38,7 +51,7 @@ export default function Dashboard() {
           .eq('author_id', myId)
           .order('created_at', { ascending: false });
 
-        setInitiatives(data ?? []);
+        setInitiatives((data as Initiative[]) ?? []);
       }
 
       setLoading(false);
@@ -49,7 +62,9 @@ export default function Dashboard() {
     return (
       <div style={{ maxWidth: 720, margin: '40px auto', fontFamily: 'system-ui' }}>
         <h1>Личный кабинет</h1>
-        <p>Вы не вошли. Перейдите на <Link href="/login">/login</Link> и выполните вход.</p>
+        <p>
+          Вы не вошли. Перейдите на <Link href="/login">/login</Link> и выполните вход.
+        </p>
       </div>
     );
   }

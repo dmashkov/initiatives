@@ -15,16 +15,29 @@ type Row = {
   author?: { email?: string | null } | null;
 };
 
+type Attachment = {
+  id: string;
+  path: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+};
+
 export default function AdminPage() {
   const router = useRouter();
 
-  // типы заданы явно — ошибки TS не будет
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
   const [myUserId, setMyUserId] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
   const [filter, setFilter] = useState<'all' | Status>('all');
   const [loading, setLoading] = useState<boolean>(true);
   const [busyId, setBusyId] = useState<string | null>(null);
+
+  // вложения
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loadingAttFor, setLoadingAttFor] = useState<string | null>(null);
+  const [attachmentsByInitiative, setAttachmentsByInitiative] = useState<Record<string, Attachment[]>>({});
+  const [signedUrlByAttachmentId, setSignedUrlByAttachmentId] = useState<Record<string, string>>({});
+  const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
 
   const STATUSES: Status[] = ['submitted', 'in_review', 'approved', 'rejected'];
 
@@ -93,6 +106,73 @@ export default function AdminPage() {
 
   const visible = rows.filter(r => (filter === 'all' ? true : r.status === filter));
 
+  async function toggleAttachments(rowId: string) {
+    if (expandedId === rowId) { setExpandedId(null); return; }
+    setExpandedId(rowId);
+
+    if (attachmentsByInitiative[rowId]) return; // уже загружены
+
+    setLoadingAttFor(rowId);
+    const { data: atts, error } = await supabase
+      .from('initiative_attachments')
+      .select('id, path, mime_type, size_bytes')
+      .eq('initiative_id', rowId)
+      .order('uploaded_at', { ascending: true });
+
+    setLoadingAttFor(null);
+    if (error) {
+      alert('Не удалось загрузить вложения: ' + error.message);
+      return;
+    }
+
+    const list = (atts ?? []) as Attachment[];
+    setAttachmentsByInitiative(prev => ({ ...prev, [rowId]: list }));
+
+    // создаём подписанные ссылки (на 1 час)
+    const links: Record<string, string> = {};
+    for (const a of list) {
+      const { data: urlData } = await supabase.storage.from('attachments').createSignedUrl(a.path, 3600);
+      if (urlData?.signedUrl) links[a.id] = urlData.signedUrl;
+    }
+    setSignedUrlByAttachmentId(prev => ({ ...prev, ...links }));
+  }
+
+  async function deleteAttachment(att: Attachment, initiativeId: string) {
+    if (!confirm('Удалить файл окончательно?')) return;
+    setDeletingAttId(att.id);
+
+    // 1) удаляем объект из бакета
+    const { error: remErr } = await supabase.storage.from('attachments').remove([att.path]);
+    if (remErr) {
+      setDeletingAttId(null);
+      alert('Не удалось удалить файл из хранилища: ' + remErr.message);
+      return;
+    }
+
+    // 2) удаляем запись из реестра
+    const { error: delErr } = await supabase
+      .from('initiative_attachments')
+      .delete()
+      .eq('id', att.id);
+
+    setDeletingAttId(null);
+
+    if (delErr) {
+      alert('Файл удалён из бакета, но запись в БД не удалена: ' + delErr.message);
+    }
+
+    // 3) обновляем UI
+    setAttachmentsByInitiative(prev => ({
+      ...prev,
+      [initiativeId]: (prev[initiativeId] ?? []).filter(a => a.id !== att.id),
+    }));
+    setSignedUrlByAttachmentId(prev => {
+      const copy = { ...prev };
+      delete copy[att.id];
+      return copy;
+    });
+  }
+
   if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
   if (isAdmin === false) {
     return (
@@ -135,39 +215,113 @@ export default function AdminPage() {
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Автор</th>
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Название</th>
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Статус</th>
+              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Вложения</th>
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Детали</th>
             </tr>
           </thead>
           <tbody>
             {visible.map(r => (
-              <tr key={r.id}>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-                  {new Date(r.created_at).toLocaleString()}
-                </td>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-                  {r.author?.email ?? '—'}
-                </td>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-                  {r.title}
-                </td>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-                  <select
-                    value={r.status}
-                    disabled={busyId === r.id}
-                    onChange={e => updateStatus(r, e.target.value as Status)}
-                  >
-                    {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                  {busyId === r.id && <span style={{ marginLeft: 8 }}>Сохранение…</span>}
-                </td>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-                  <Link href={`/initiatives/${r.id}`}>Открыть</Link>
-                </td>
-              </tr>
+              <FragmentWithAttachments
+                key={r.id}
+                row={r}
+                busyId={busyId}
+                expandedId={expandedId}
+                loadingAttFor={loadingAttFor}
+                attachments={attachmentsByInitiative[r.id]}
+                signed={signedUrlByAttachmentId}
+                deletingAttId={deletingAttId}
+                onToggle={() => toggleAttachments(r.id)}
+                onUpdateStatus={(s) => updateStatus(r, s)}
+                onDeleteAtt={(att) => deleteAttachment(att, r.id)}
+              />
             ))}
           </tbody>
         </table>
       )}
     </div>
+  );
+}
+
+/** Вспомогательный компонент строки с разворачиваемым списком вложений */
+function FragmentWithAttachments(props: {
+  row: Row;
+  busyId: string | null;
+  expandedId: string | null;
+  loadingAttFor: string | null;
+  attachments?: Attachment[];
+  signed: Record<string, string>;
+  deletingAttId: string | null;
+  onToggle: () => void;
+  onUpdateStatus: (newStatus: Status) => void;
+  onDeleteAtt: (a: Attachment) => void;
+}) {
+  const { row, busyId, expandedId, loadingAttFor, attachments, signed, deletingAttId, onToggle, onUpdateStatus, onDeleteAtt } = props;
+  const STATUSES: Status[] = ['submitted', 'in_review', 'approved', 'rejected'];
+  const expanded = expandedId === row.id;
+
+  return (
+    <>
+      <tr>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+          {new Date(row.created_at).toLocaleString()}
+        </td>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+          {row.author?.email ?? '—'}
+        </td>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+          {row.title}
+        </td>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+          <select
+            value={row.status}
+            disabled={busyId === row.id}
+            onChange={e => onUpdateStatus(e.target.value as Status)}
+          >
+            {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+          {busyId === row.id && <span style={{ marginLeft: 8 }}>Сохранение…</span>}
+        </td>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+          <button onClick={onToggle}>{expanded ? 'Скрыть' : 'Показать'}</button>
+          {loadingAttFor === row.id && <span style={{ marginLeft: 8 }}>Загрузка…</span>}
+        </td>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+          <Link href={`/initiatives/${row.id}`}>Открыть</Link>
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr>
+          <td colSpan={6} style={{ background: '#fafafa', borderBottom: '1px solid #eee', padding: 12 }}>
+            <b>Вложения:</b>
+            {!attachments || attachments.length === 0 ? (
+              <p style={{ marginTop: 6 }}>Нет файлов.</p>
+            ) : (
+              <ul style={{ marginTop: 6 }}>
+                {attachments.map(a => (
+                  <li key={a.id} style={{ marginBottom: 6 }}>
+                    {a.mime_type ?? 'file'} • {(a.size_bytes ?? 0) > 0 ? `${Math.round((a.size_bytes ?? 0)/1024)} КБ` : ''}
+                    {' — '}
+                    {signed[a.id] ? (
+                      <a href={signed[a.id]} target="_blank" rel="noreferrer">скачать</a>
+                    ) : (
+                      <span>ссылка недоступна</span>
+                    )}
+                    <button
+                      disabled={deletingAttId === a.id}
+                      onClick={() => onDeleteAtt(a)}
+                      style={{ marginLeft: 12 }}
+                    >
+                      {deletingAttId === a.id ? 'Удаление…' : 'Удалить'}
+                    </button>
+                    <div style={{ fontSize: 12, color: '#666' }}>{a.path}</div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

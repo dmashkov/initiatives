@@ -24,12 +24,13 @@ export default function AuthCallback() {
         } else {
           router.replace('/login');
         }
-      } catch (e: any) {
-        alert('Не удалось войти: ' + (e?.message ?? e));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        alert('Не удалось войти: ' + msg);
         router.replace('/login');
       }
     })();
   }, [router, sp]);
 
-  return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Вход…</p>;
+  return <p style={{ padding: 24 }}>Вход… пожалуйста, подождите.</p>;
 }

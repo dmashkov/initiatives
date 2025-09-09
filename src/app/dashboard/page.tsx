@@ -1,83 +1,55 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabaseClient';
 
-type Initiative = {
-  id: string;
-  title: string;
-  status: 'submitted' | 'in_review' | 'approved' | 'rejected';
-  created_at: string;
-};
-
 export default function Dashboard() {
-  const [email, setEmail] = useState<string | null>(null);
-  const [role, setRole] = useState<'user' | 'admin' | null>(null);
-  const [initiatives, setInitiatives] = useState<Initiative[]>([]);
+  const [email, setEmail] = useState(null);
+  const [role, setRole] = useState(null); // 'user' | 'admin'
+  const [initiatives, setInitiatives] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      // 1) Кто вошёл
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user?.email) {
-        setLoading(false);
-        return;
-      }
+      if (!user?.email) { setLoading(false); return; }
       setEmail(user.email);
 
-      // 2) Гарантируем запись в app_users (уникальность по auth_user_id)
+      // не перезатираем роль
       await supabase.from('app_users').upsert(
-        {
-          auth_user_id: user.id,
-          email: user.email,
-          full_name: user.user_metadata?.full_name ?? null,
-          // role: 'user', // при первом входе — обычный пользователь? Не указываем, чтобы не перезаписать существующую
-        },
+        { auth_user_id: user.id, email: user.email, full_name: user.user_metadata?.full_name ?? null },
         { onConflict: 'auth_user_id' },
       );
 
-      // 3) Получаем свой app_users.id и роль
-      const { data: me, error: meErr } = await supabase
+      const { data: me } = await supabase
         .from('app_users')
         .select('id, role')
         .eq('auth_user_id', user.id)
         .maybeSingle();
 
-      if (meErr) {
-        console.error(meErr);
-        setLoading(false);
-        return;
-      }
-
       const myId = me?.id ?? null;
-      setRole((me?.role as 'user' | 'admin') ?? 'user');
+      setRole(me?.role ?? 'user');
 
-      // 4) Загружаем свои инициативы
       if (myId) {
-        const { data, error } = await supabase
+        const { data } = await supabase
           .from('initiatives')
           .select('id, title, status, created_at')
           .eq('author_id', myId)
           .order('created_at', { ascending: false });
 
-        if (error) {
-          console.error(error);
-        } else {
-          setInitiatives((data ?? []) as Initiative[]);
-        }
+        setInitiatives(data ?? []);
       }
 
       setLoading(false);
     })();
   }, []);
 
-  // Если не вошли — подсказываем
   if (!email) {
     return (
       <div style={{ maxWidth: 720, margin: '40px auto', fontFamily: 'system-ui' }}>
         <h1>Личный кабинет</h1>
-        <p>Вы не вошли. Перейдите на <a href="/login">/login</a> и выполните вход.</p>
+        <p>Вы не вошли. Перейдите на <Link href="/login">/login</Link> и выполните вход.</p>
       </div>
     );
   }
@@ -89,12 +61,12 @@ export default function Dashboard() {
 
       {role === 'admin' && (
         <p style={{ marginTop: 8 }}>
-          <a href="/admin">Перейти в админку</a>
+          <Link href="/admin">Перейти в админку</Link>
         </p>
       )}
 
       <p style={{ marginTop: 16 }}>
-        <a href="/initiatives/new">➕ Подать инициативу</a>
+        <Link href="/initiatives/new">➕ Подать инициативу</Link>
       </p>
 
       <h2 style={{ marginTop: 24 }}>Мои инициативы</h2>

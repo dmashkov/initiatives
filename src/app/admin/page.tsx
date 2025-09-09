@@ -39,6 +39,9 @@ export default function AdminPage() {
   const [signedUrlByAttachmentId, setSignedUrlByAttachmentId] = useState<Record<string, string>>({});
   const [deletingAttId, setDeletingAttId] = useState<string | null>(null);
 
+  // RAG
+  const [reindexingId, setReindexingId] = useState<string | null>(null);
+
   const STATUSES: Status[] = ['submitted', 'in_review', 'approved', 'rejected'];
 
   useEffect(() => {
@@ -173,6 +176,26 @@ export default function AdminPage() {
     });
   }
 
+  async function reindex(initiativeId: string) {
+    if (reindexingId) return;
+    setReindexingId(initiativeId);
+    try {
+      const r = await fetch('/api/ingest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initiativeId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j?.error ?? `HTTP ${r.status}`);
+      alert('Переиндексация завершена.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert('Индексирование не удалось: ' + msg);
+    } finally {
+      setReindexingId(null);
+    }
+  }
+
   if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
   if (isAdmin === false) {
     return (
@@ -216,7 +239,7 @@ export default function AdminPage() {
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Название</th>
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Статус</th>
               <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Вложения</th>
-              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Детали</th>
+              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Детали / RAG</th>
             </tr>
           </thead>
           <tbody>
@@ -230,9 +253,11 @@ export default function AdminPage() {
                 attachments={attachmentsByInitiative[r.id]}
                 signed={signedUrlByAttachmentId}
                 deletingAttId={deletingAttId}
+                reindexingId={reindexingId}
                 onToggle={() => toggleAttachments(r.id)}
                 onUpdateStatus={(s) => updateStatus(r, s)}
                 onDeleteAtt={(att) => deleteAttachment(att, r.id)}
+                onReindex={() => reindex(r.id)}
               />
             ))}
           </tbody>
@@ -242,7 +267,7 @@ export default function AdminPage() {
   );
 }
 
-/** Вспомогательный компонент строки с разворачиваемым списком вложений */
+/** Вспомогательная строка с разворачиваемым списком вложений */
 function FragmentWithAttachments(props: {
   row: Row;
   busyId: string | null;
@@ -251,11 +276,18 @@ function FragmentWithAttachments(props: {
   attachments?: Attachment[];
   signed: Record<string, string>;
   deletingAttId: string | null;
+  reindexingId: string | null;
   onToggle: () => void;
   onUpdateStatus: (newStatus: Status) => void;
   onDeleteAtt: (a: Attachment) => void;
+  onReindex: () => void;
 }) {
-  const { row, busyId, expandedId, loadingAttFor, attachments, signed, deletingAttId, onToggle, onUpdateStatus, onDeleteAtt } = props;
+  const {
+    row, busyId, expandedId, loadingAttFor, attachments,
+    signed, deletingAttId, reindexingId,
+    onToggle, onUpdateStatus, onDeleteAtt, onReindex
+  } = props;
+
   const STATUSES: Status[] = ['submitted', 'in_review', 'approved', 'rejected'];
   const expanded = expandedId === row.id;
 
@@ -268,9 +300,7 @@ function FragmentWithAttachments(props: {
         <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
           {row.author?.email ?? '—'}
         </td>
-        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-          {row.title}
-        </td>
+        <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>{row.title}</td>
         <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
           <select
             value={row.status}
@@ -287,6 +317,13 @@ function FragmentWithAttachments(props: {
         </td>
         <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
           <Link href={`/initiatives/${row.id}`}>Открыть</Link>
+          <button
+            onClick={onReindex}
+            disabled={reindexingId === row.id}
+            style={{ marginLeft: 12 }}
+          >
+            {reindexingId === row.id ? 'Индексирую…' : 'Индексировать'}
+          </button>
         </td>
       </tr>
 

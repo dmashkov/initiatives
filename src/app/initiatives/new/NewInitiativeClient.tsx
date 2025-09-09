@@ -42,6 +42,7 @@ export default function NewInitiativeClient() {
 
     setSaving(true);
 
+    // 1) создаём инициативу
     const { data: ins, error } = await supabase
       .from('initiatives')
       .insert({
@@ -61,6 +62,7 @@ export default function NewInitiativeClient() {
 
     const initiativeId = ins!.id as string;
 
+    // 2) загружаем вложения (если есть)
     const files = fileRef.current?.files;
     if (files && files.length > 0) {
       try {
@@ -79,6 +81,21 @@ export default function NewInitiativeClient() {
       }
     }
 
+    // 3) индексация для RAG (не блокирующая UX: ошибки — в консоль/alert)
+    try {
+      const res = await fetch('/api/ingest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ initiativeId }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        console.warn('ingest failed:', j?.error ?? res.status);
+      }
+    } catch (e) {
+      console.warn('ingest error:', e);
+    }
+
     setSaving(false);
     alert('Инициатива отправлена.');
     router.push('/dashboard');
@@ -90,27 +107,43 @@ export default function NewInitiativeClient() {
       <form onSubmit={handleSubmit}>
         <div style={{ margin: '8px 0' }}>
           <label>Название<br />
-            <input value={title} onChange={(e) => setTitle(e.target.value)} required
-              style={{ width: '100%', padding: 8 }} />
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              required
+              style={{ width: '100%', padding: 8 }}
+            />
           </label>
         </div>
+
         <div style={{ margin: '8px 0' }}>
           <label>Категория (необязательно)<br />
-            <input value={category} onChange={(e) => setCategory(e.target.value)}
-              style={{ width: '100%', padding: 8 }} />
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              style={{ width: '100%', padding: 8 }}
+            />
           </label>
         </div>
+
         <div style={{ margin: '8px 0' }}>
           <label>Описание<br />
-            <textarea value={description} onChange={(e) => setDescription(e.target.value)} required
-              rows={6} style={{ width: '100%', padding: 8 }} />
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              required
+              rows={6}
+              style={{ width: '100%', padding: 8 }}
+            />
           </label>
         </div>
+
         <div style={{ margin: '8px 0' }}>
           <label>Вложения (до 5 файлов, ≤ 10 МБ каждый)<br />
             <input ref={fileRef} type="file" multiple />
           </label>
         </div>
+
         <button type="submit" disabled={saving} style={{ padding: 10 }}>
           {saving ? 'Сохранение…' : 'Отправить'}
         </button>

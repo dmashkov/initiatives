@@ -1,35 +1,25 @@
 'use client';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import FeedbackForm from '@/components/FeedbackForm';
 
 type Status = 'submitted' | 'in_review' | 'approved' | 'rejected';
 
 type Initiative = {
   id: string;
   title: string;
-  description: string;
+  description: string | null;
   category: string | null;
-  status: Status | string;
+  status: Status;
   created_at: string;
-  author?: { email?: string | null } | null;
-};
-
-type Comment = {
-  id: string;
-  body: string;
-  created_at: string;
-  author?: { email?: string | null } | null;
-};
-
-type History = {
-  id: string;
-  from_status: string | null;
-  to_status: string;
-  changed_at: string;
-  changed_by?: { email?: string | null } | null;
+  author_id: string | null;
+  author_email?: string | null;
 };
 
 type Attachment = {
@@ -37,132 +27,177 @@ type Attachment = {
   path: string;
   mime_type: string | null;
   size_bytes: number | null;
+  uploaded_at: string;
 };
 
-export default function InitiativePage() {
-  const params = useParams<{ id: string }>();
-  const rawId = params?.id;
-  const id = Array.isArray(rawId) ? rawId[0] : rawId;
+export default function InitiativeDetailsPage({
+  params,
+}: {
+  params: { id: string };
+}) {
+  const id = params.id;
+  const router = useRouter();
 
   const [it, setIt] = useState<Initiative | null>(null);
-  const [comments, setComments] = useState<Comment[]>([]);
-  const [history, setHistory] = useState<History[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [signed, setSigned] = useState<Record<string, string>>({});
+  const [signedUrlById, setSignedUrlById] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState<boolean>(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!id) return;
-
     (async () => {
-      // Инициатива + автор
-      const { data: init } = await supabase
+      setLoading(true);
+      setErrorMsg(null);
+
+      // 1) сама инициатива
+      const { data: row, error } = await supabase
         .from('initiatives')
-        .select('id,title,description,category,status,created_at, author:app_users(email)')
-        .eq('id', id as string)
+        .select('id, title, description, category, status, created_at, author_id')
+        .eq('id', id)
         .maybeSingle();
-      setIt((init as unknown as Initiative) ?? null);
 
-      // Комментарии
-      const { data: cmts } = await supabase
-        .from('initiative_comments')
-        .select('id,body,created_at, author:app_users(email)')
-        .eq('initiative_id', id as string)
-        .order('created_at', { ascending: true });
-      setComments(((cmts ?? []) as Comment[]));
+      if (error) {
+        setErrorMsg(error.message);
+        setLoading(false);
+        return;
+      }
+      if (!row) {
+        setErrorMsg('Инициатива не найдена');
+        setLoading(false);
+        return;
+      }
 
-      // История статусов
-      const { data: hist } = await supabase
-        .from('initiative_status_history')
-        .select('id,from_status,to_status,changed_at, changed_by:app_users(email)')
-        .eq('initiative_id', id as string)
-        .order('changed_at', { ascending: true });
-      setHistory(((hist ?? []) as History[]));
+      // 2) e-mail автора (отдельным запросом — надёжнее, чем вложенный select)
+      let authorEmail: string | null = null;
+      if (row.author_id) {
+        const { data: au } = await supabase
+          .from('app_users')
+          .select('email')
+          .eq('id', row.author_id)
+          .maybeSingle();
+        authorEmail = au?.email ?? null;
+      }
 
-      // Вложения
-      const { data: atts } = await supabase
+      setIt({
+        ...row,
+        author_email: authorEmail,
+      } as Initiative);
+
+      // 3) вложения
+      const { data: atts, error: attErr } = await supabase
         .from('initiative_attachments')
-        .select('id, path, mime_type, size_bytes')
-        .eq('initiative_id', id as string)
+        .select('id, path, mime_type, size_bytes, uploaded_at')
+        .eq('initiative_id', id)
         .order('uploaded_at', { ascending: true });
 
-      const list = ((atts ?? []) as Attachment[]);
-      setAttachments(list);
+      if (!attErr && atts) {
+        const list = atts as Attachment[];
+        setAttachments(list);
 
-      // Подписанные ссылки (на 1 час)
-      const links: Record<string, string> = {};
-      for (const a of list) {
-        const { data: urlData } = await supabase
-          .storage
-          .from('attachments')
-          .createSignedUrl(a.path, 3600);
-        if (urlData?.signedUrl) links[a.id] = urlData.signedUrl;
+        // подписанные ссылки на 1 час
+        const links: Record<string, string> = {};
+        for (const a of list) {
+          const { data: urlData } = await supabase
+            .storage
+            .from('attachments')
+            .createSignedUrl(a.path, 3600);
+          if (urlData?.signedUrl) links[a.id] = urlData.signedUrl;
+        }
+        setSignedUrlById(links);
       }
-      setSigned(links);
 
       setLoading(false);
     })();
   }, [id]);
 
   if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
-  if (!it) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Инициатива не найдена.</p>;
+
+  if (errorMsg) {
+    return (
+      <div style={{ padding: 24, fontFamily: 'system-ui' }}>
+        <nav style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+          <Link href="/dashboard">← Личный кабинет</Link>
+          <Link href="/search">Поиск</Link>
+          <Link href="/ask">AI-помощник</Link>
+          <Link href="/admin">Админка</Link>
+        </nav>
+        <h1>Детали инициативы</h1>
+        <p style={{ color: '#DC2626' }}>Ошибка: {errorMsg}</p>
+      </div>
+    );
+  }
+
+  if (!it) {
+    return (
+      <div style={{ padding: 24, fontFamily: 'system-ui' }}>
+        <nav style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+          <Link href="/dashboard">← Личный кабинет</Link>
+          <Link href="/search">Поиск</Link>
+          <Link href="/ask">AI-помощник</Link>
+          <Link href="/admin">Админка</Link>
+        </nav>
+        <h1>Детали инициативы</h1>
+        <p>Запись не найдена.</p>
+      </div>
+    );
+  }
 
   return (
-    <div style={{ maxWidth: 900, margin: '24px auto', fontFamily: 'system-ui' }}>
-      <p><Link href="/admin">← Назад к списку</Link></p>
+    <div style={{ maxWidth: 960, margin: '24px auto', fontFamily: 'system-ui' }}>
+      <nav style={{ marginBottom: 12, display: 'flex', gap: 12 }}>
+        <button onClick={() => router.back()}>← Назад</button>
+        <Link href="/dashboard">ЛК</Link>
+        <Link href="/search">Поиск</Link>
+        <Link href="/ask">AI-помощник</Link>
+        <Link href="/admin">Админка</Link>
+      </nav>
 
-      <h1>{it.title}</h1>
-      <p><b>Автор:</b> {it.author?.email ?? '—'}</p>
-      <p><b>Статус:</b> {it.status}</p>
-      <p><b>Категория:</b> {it.category ?? '—'}</p>
-      <p><b>Создано:</b> {new Date(it.created_at).toLocaleString()}</p>
+      <h1 style={{ marginBottom: 4 }}>{it.title}</h1>
+      <div style={{ color: '#6B7280', marginBottom: 16 }}>
+        Создано: {new Date(it.created_at).toLocaleString()}
+        {' · '}Статус: <b>{it.status}</b>
+        {it.category ? <> {' · '}Категория: {it.category}</> : null}
+        {it.author_email ? <> {' · '}Автор: {it.author_email}</> : null}
+      </div>
 
-      <h3 style={{ marginTop: 24 }}>Описание</h3>
-      <p style={{ whiteSpace: 'pre-wrap' }}>{it.description}</p>
+      <section style={{ marginBottom: 24 }}>
+        <h3>Описание</h3>
+        <div style={{ whiteSpace: 'pre-wrap' }}>{it.description || '—'}</div>
+      </section>
 
-      <h3 style={{ marginTop: 24 }}>Вложения</h3>
-      {attachments.length === 0 ? (
-        <p>Нет приложенных файлов.</p>
-      ) : (
-        <ul>
-          {attachments.map(a => (
-            <li key={a.id}>
-              {a.mime_type ?? 'file'} • {(a.size_bytes ?? 0) > 0 ? `${Math.round((a.size_bytes ?? 0)/1024)} КБ` : ''}
-              {' — '}
-              {signed[a.id] ? (
-                <a href={signed[a.id]} target="_blank" rel="noreferrer">скачать</a>
-              ) : (
-                <span>ссылка недоступна</span>
-              )}
-              <div style={{ fontSize: 12, color: '#666' }}>{a.path}</div>
-            </li>
-          ))}
-        </ul>
-      )}
+      <section style={{ marginBottom: 24 }}>
+        <h3>Вложения</h3>
+        {attachments.length === 0 ? (
+          <p>Нет файлов.</p>
+        ) : (
+          <ul>
+            {attachments.map((a) => (
+              <li key={a.id} style={{ marginBottom: 8 }}>
+                {a.mime_type ?? 'file'} •{' '}
+                {(a.size_bytes ?? 0) > 0 ? `${Math.round((a.size_bytes ?? 0) / 1024)} КБ` : '—'}{' '}
+                — {new Date(a.uploaded_at).toLocaleString()}
+                {' — '}
+                {signedUrlById[a.id] ? (
+                  <a href={signedUrlById[a.id]} target="_blank" rel="noreferrer">скачать</a>
+                ) : (
+                  <span>ссылка недоступна</span>
+                )}
+                <div style={{ fontSize: 12, color: '#666' }}>{a.path}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
 
-      <h3 style={{ marginTop: 24 }}>История статусов</h3>
-      {history.length === 0 ? <p>Пока нет записей.</p> : (
-        <ul>
-          {history.map(h => (
-            <li key={h.id}>
-              {new Date(h.changed_at).toLocaleString()} — {h.from_status ?? '—'} → <b>{h.to_status}</b>
-              {h.changed_by?.email ? ` (изменил: ${h.changed_by.email})` : ''}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <h3 style={{ marginTop: 24 }}>Комментарии</h3>
-      {comments.length === 0 ? <p>Пока нет комментариев.</p> : (
-        <ul>
-          {comments.map(c => (
-            <li key={c.id}>
-              <b>{c.author?.email ?? '—'}</b> · {new Date(c.created_at).toLocaleString()}
-              <div style={{ whiteSpace: 'pre-wrap' }}>{c.body}</div>
-            </li>
-          ))}
-        </ul>
-      )}
+      {/* -------- ФОРМА ОБРАТНОЙ СВЯЗИ (виджет) -------- */}
+      <section style={{ marginTop: 32 }}>
+        <h3>Обратная связь по инициативе</h3>
+        <p style={{ marginTop: 4, color: '#6B7280' }}>
+          Поделитесь идеей, укажите проблему или задайте вопрос. Ваше сообщение увидит команда.
+        </p>
+        <FeedbackForm initiativeId={it.id} compact />
+      </section>
+      {/* ----------------------------------------------- */}
     </div>
   );
 }

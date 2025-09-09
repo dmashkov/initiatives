@@ -70,10 +70,11 @@ export default function DashboardPage() {
   return (
     <div style={{ maxWidth: 1000, margin: '24px auto', fontFamily: 'system-ui' }}>
       <nav style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Link href="/initiatives/new">+ Подать инициативу</Link>
           <Link href="/search">Поиск</Link>
           <Link href="/ask">AI-помощник</Link>
+          <Link href="/feedback">Обратная связь</Link>
           {isAdmin && <Link href="/admin">Админка</Link>}
         </div>
         <button onClick={signOut}>Выйти</button>

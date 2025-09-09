@@ -218,10 +218,11 @@ export default function AdminPage() {
   return (
     <div style={{ maxWidth: 1100, margin: '24px auto', fontFamily: 'system-ui' }}>
       <nav style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <Link href="/dashboard">← В личный кабинет</Link>
           <Link href="/search">Поиск</Link>
           <Link href="/ask">AI-помощник</Link>
+          <Link href="/feedback">Обратная связь</Link>
         </div>
         <button
           onClick={async () => {

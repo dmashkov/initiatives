@@ -2,37 +2,40 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
 type Status = 'submitted' | 'in_review' | 'approved' | 'rejected';
 
-type Initiative = {
+type Row = {
   id: string;
   title: string;
   status: Status;
   created_at: string;
 };
 
-export default function Dashboard() {
-  const [email, setEmail] = useState<string | null>(null);
-  const [role, setRole] = useState<'user' | 'admin' | null>(null);
-  const [initiatives, setInitiatives] = useState<Initiative[]>([]);
+export default function DashboardPage() {
+  const router = useRouter();
+  const [email, setEmail] = useState<string>('');
+  const [myUserId, setMyUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user?.email) { setLoading(false); return; }
-      setEmail(user.email);
+      if (!user) { setLoading(false); return; }
+      setEmail(user.email ?? '');
 
-      // не перезатираем роль
+      // обновим/создадим профиль
       await supabase.from('app_users').upsert(
         {
           auth_user_id: user.id,
-          email: user.email,
-          full_name: user.user_metadata?.full_name ?? null,
+          email: user.email ?? null,
+          full_name: (user.user_metadata as Record<string, unknown> | undefined)?.full_name ?? null,
         },
-        { onConflict: 'auth_user_id' },
+        { onConflict: 'auth_user_id' }
       );
 
       const { data: me } = await supabase
@@ -41,71 +44,67 @@ export default function Dashboard() {
         .eq('auth_user_id', user.id)
         .maybeSingle();
 
-      const myId = (me?.id as string) ?? null;
-      setRole((me?.role as 'user' | 'admin') ?? 'user');
+      setMyUserId(me?.id ?? null);
+      setIsAdmin(me?.role === 'admin');
 
-      if (myId) {
+      if (me?.id) {
         const { data } = await supabase
           .from('initiatives')
-          .select('id, title, status, created_at')
-          .eq('author_id', myId)
+          .select('id,title,status,created_at')
+          .eq('author_id', me.id)
           .order('created_at', { ascending: false });
-
-        setInitiatives((data as Initiative[]) ?? []);
+        setRows((data ?? []) as Row[]);
       }
 
       setLoading(false);
     })();
   }, []);
 
-  if (!email) {
-    return (
-      <div style={{ maxWidth: 720, margin: '40px auto', fontFamily: 'system-ui' }}>
-        <h1>Личный кабинет</h1>
-        <p>
-          Вы не вошли. Перейдите на <Link href="/login">/login</Link> и выполните вход.
-        </p>
-      </div>
-    );
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.replace('/login');
   }
 
+  if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
+
   return (
-    <div style={{ maxWidth: 1000, margin: '40px auto', fontFamily: 'system-ui' }}>
+    <div style={{ maxWidth: 1000, margin: '24px auto', fontFamily: 'system-ui' }}>
+      <nav style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <Link href="/initiatives/new">+ Подать инициативу</Link>
+          <Link href="/search">Поиск</Link>
+          {isAdmin && <Link href="/admin">Админка</Link>}
+        </div>
+        <button onClick={signOut}>Выйти</button>
+      </nav>
+
       <h1>Личный кабинет</h1>
-      <p>Вы вошли как: <b>{email}</b></p>
+      <p>Вы вошли как: <b>{email || '—'}</b></p>
 
-      {role === 'admin' && (
-        <p style={{ marginTop: 8 }}>
-          <Link href="/admin">Перейти в админку</Link>
-        </p>
-      )}
-
-      <p style={{ marginTop: 16 }}>
-        <Link href="/initiatives/new">➕ Подать инициативу</Link>
-      </p>
-
-      <h2 style={{ marginTop: 24 }}>Мои инициативы</h2>
-      {loading ? (
-        <p>Загрузка…</p>
-      ) : initiatives.length === 0 ? (
-        <p>Пока нет инициатив.</p>
+      <h3 style={{ marginTop: 16 }}>Мои инициативы</h3>
+      {rows.length === 0 ? (
+        <p>Пока нет инициатив. <Link href="/initiatives/new">Добавить первую</Link>.</p>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid #ccc', padding: 6 }}>Дата</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid #ccc', padding: 6 }}>Название</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid #ccc', padding: 6 }}>Статус</th>
+              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Дата</th>
+              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Название</th>
+              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Статус</th>
+              <th style={{ borderBottom: '1px solid #ccc', textAlign: 'left', padding: 6 }}>Детали</th>
             </tr>
           </thead>
           <tbody>
-            {initiatives.map((it) => (
-              <tr key={it.id}>
+            {rows.map(r => (
+              <tr key={r.id}>
                 <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
-                  {new Date(it.created_at).toLocaleString()}
+                  {new Date(r.created_at).toLocaleString()}
                 </td>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>{it.title}</td>
-                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>{it.status}</td>
+                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>{r.title}</td>
+                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>{r.status}</td>
+                <td style={{ borderBottom: '1px solid #eee', padding: 6 }}>
+                  <Link href={`/initiatives/${r.id}`}>Открыть</Link>
+                </td>
               </tr>
             ))}
           </tbody>

@@ -131,7 +131,7 @@ export default function AdminPage() {
     const list = (atts ?? []) as Attachment[];
     setAttachmentsByInitiative(prev => ({ ...prev, [rowId]: list }));
 
-    // создаём подписанные ссылки (на 1 час)
+    // подписанные ссылки (1 час)
     const links: Record<string, string> = {};
     for (const a of list) {
       const { data: urlData } = await supabase.storage.from('attachments').createSignedUrl(a.path, 3600);
@@ -144,7 +144,6 @@ export default function AdminPage() {
     if (!confirm('Удалить файл окончательно?')) return;
     setDeletingAttId(att.id);
 
-    // 1) удаляем объект из бакета
     const { error: remErr } = await supabase.storage.from('attachments').remove([att.path]);
     if (remErr) {
       setDeletingAttId(null);
@@ -152,7 +151,6 @@ export default function AdminPage() {
       return;
     }
 
-    // 2) удаляем запись из реестра
     const { error: delErr } = await supabase
       .from('initiative_attachments')
       .delete()
@@ -164,7 +162,6 @@ export default function AdminPage() {
       alert('Файл удалён из бакета, но запись в БД не удалена: ' + delErr.message);
     }
 
-    // 3) обновляем UI
     setAttachmentsByInitiative(prev => ({
       ...prev,
       [initiativeId]: (prev[initiativeId] ?? []).filter(a => a.id !== att.id),
@@ -177,30 +174,30 @@ export default function AdminPage() {
   }
 
   async function reindex(initiativeId: string) {
-  if (reindexingId) return;
-  setReindexingId(initiativeId);
-  try {
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
+    if (reindexingId) return;
+    setReindexingId(initiativeId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.access_token;
 
-    const r = await fetch('/api/ingest', {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ initiativeId }),
-    });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j?.error ?? `HTTP ${r.status}`);
-    alert('Переиндексация завершена.');
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    alert('Индексирование не удалось: ' + msg);
-  } finally {
-    setReindexingId(null);
+      const r = await fetch('/api/ingest', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ initiativeId }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((j as { error?: string })?.error ?? `HTTP ${r.status}`);
+      alert('Переиндексация завершена.');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert('Индексирование не удалось: ' + msg);
+    } finally {
+      setReindexingId(null);
+    }
   }
-}
 
   if (loading) return <p style={{ padding: 24, fontFamily: 'system-ui' }}>Загрузка…</p>;
   if (isAdmin === false) {
@@ -214,7 +211,10 @@ export default function AdminPage() {
   return (
     <div style={{ maxWidth: 1100, margin: '24px auto', fontFamily: 'system-ui' }}>
       <nav style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-        <Link href="/dashboard">← В личный кабинет</Link>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <Link href="/dashboard">← В личный кабинет</Link>
+          <Link href="/search">Поиск</Link>
+        </div>
         <button
           onClick={async () => {
             await supabase.auth.signOut();

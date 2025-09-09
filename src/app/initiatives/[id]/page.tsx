@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import Link from 'next/link';
 
 export default function InitiativePage() {
   const params = useParams();            // { id: '...' }
@@ -49,7 +50,7 @@ export default function InitiativePage() {
 
   return (
     <div style={{ maxWidth: 900, margin: '24px auto', fontFamily: 'system-ui' }}>
-      <p><a href="/admin">← Назад к списку</a></p>
+      <p><Link href="/admin">← Назад к списку</Link></p>
       <h1>{it.title}</h1>
       <p><b>Автор:</b> {it.author?.email ?? '—'}</p>
       <p><b>Статус:</b> {it.status}</p>

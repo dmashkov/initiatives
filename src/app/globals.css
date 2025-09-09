@@ -28,3 +28,106 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* === UI baseline for form controls === */
+* { box-sizing: border-box; }
+
+:root {
+  --ui-border: #D0D5DD;      /* тонкая серая рамка */
+  --ui-radius: 6px;          /* мягкие скругления */
+  --ui-focus:  #3B82F6;      /* синий фокус */
+  --ui-bg:     #FFFFFF;
+  --ui-text:   #111827;
+}
+
+/* Базовая типографика для контролов */
+input, select, textarea, button {
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "Apple Color Emoji", "Segoe UI Emoji";
+  color: var(--ui-text);
+}
+
+/* Поля ввода с тонкой рамкой */
+input:not([type="checkbox"]):not([type="radio"]),
+select,
+textarea {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-bg);
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+
+/* Фокус — аккуратная подсветка */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--ui-focus);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, .2);
+}
+
+/* Дизейбл состояний */
+input:disabled,
+select:disabled,
+textarea:disabled {
+  background: #F3F4F6;
+  color: #6B7280;
+  cursor: not-allowed;
+}
+
+/* Файловый инпут с рамкой и аккуратной кнопкой */
+input[type="file"] {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: var(--ui-bg);
+  padding: 6px;
+}
+input[type="file"]::file-selector-button {
+  margin-right: 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: #F9FAFB;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+input[type="file"]::file-selector-button:hover {
+  background: #F3F4F6;
+}
+
+/* Кнопки — нейтральные по умолчанию */
+button {
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius);
+  background: #F9FAFB;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease;
+}
+button:hover { background: #F3F4F6; }
+button:disabled { opacity: .6; cursor: not-allowed; }
+
+/* Таблицы читаемее */
+table th, table td { vertical-align: top; }
+
+/* Тёмная тема по системной настройке (опционально) */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ui-border: #3F3F46;
+    --ui-bg:     #0B0F14;
+    --ui-text:   #E5E7EB;
+  }
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea,
+  input[type="file"] {
+    background: var(--ui-bg);
+    color: var(--ui-text);
+  }
+  button {
+    background: #111827;
+    color: var(--ui-text);
+    border-color: #374151;
+  }
+  button:hover { background: #1F2937; }
+}

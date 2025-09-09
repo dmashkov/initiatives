@@ -73,6 +73,7 @@ export default function DashboardPage() {
         <div style={{ display: 'flex', gap: 12 }}>
           <Link href="/initiatives/new">+ Подать инициативу</Link>
           <Link href="/search">Поиск</Link>
+          <Link href="/ask">AI-помощник</Link>
           {isAdmin && <Link href="/admin">Админка</Link>}
         </div>
         <button onClick={signOut}>Выйти</button>

@@ -22,6 +22,13 @@ type Attachment = {
   size_bytes: number | null;
 };
 
+const inputStyle: React.CSSProperties = {
+  border: '1px solid #D0D5DD',
+  borderRadius: 6,
+  padding: '6px 8px',
+  background: 'white',
+};
+
 export default function AdminPage() {
   const router = useRouter();
 
@@ -214,6 +221,7 @@ export default function AdminPage() {
         <div style={{ display: 'flex', gap: 12 }}>
           <Link href="/dashboard">← В личный кабинет</Link>
           <Link href="/search">Поиск</Link>
+          <Link href="/ask">AI-помощник</Link>
         </div>
         <button
           onClick={async () => {
@@ -229,7 +237,11 @@ export default function AdminPage() {
 
       <div style={{ margin: '12px 0' }}>
         Фильтр:&nbsp;
-        <select value={filter} onChange={e => setFilter(e.target.value as 'all' | Status)}>
+        <select
+          value={filter}
+          onChange={e => setFilter(e.target.value as 'all' | Status)}
+          style={inputStyle}
+        >
           <option value="all">все</option>
           {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
@@ -296,6 +308,12 @@ function FragmentWithAttachments(props: {
 
   const STATUSES: Status[] = ['submitted', 'in_review', 'approved', 'rejected'];
   const expanded = expandedId === row.id;
+  const inputStyle: React.CSSProperties = {
+    border: '1px solid #D0D5DD',
+    borderRadius: 6,
+    padding: '6px 8px',
+    background: 'white',
+  };
 
   return (
     <>
@@ -312,6 +330,7 @@ function FragmentWithAttachments(props: {
             value={row.status}
             disabled={busyId === row.id}
             onChange={e => onUpdateStatus(e.target.value as Status)}
+            style={inputStyle}
           >
             {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
